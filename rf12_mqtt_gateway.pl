@@ -18,27 +18,13 @@ my $baudrate = "57600";
 my $mqtt_server = "localhost";
 my $mqtt_user = "rf12gw";
 my $mqtt_pass = "sCHjd5%3m8XbSj";
+#my $mqtt_auth = "-u '$mqtt_user' -P '$mqtt_pass'"
+my $mqtt_auth = "";
 my $mqtt_port = 1884;
 my $mqtt_cacert = "/etc/mosquitto/ca_certificates/ca.crt";
 #my $mqtt_tls = "--cafile $mqtt_cacert";
 my $mqtt_tls = "";
-my $mqtt_topic_prefix = "raw/RF12";
-
-my %device_types = (
-    "4" => "balcony",
-    "5" => "smartmeter",
-    "8" => "socket",
-);
-
-my @pstates = (
-    "off",
-    "on",
-);
-
-sub parsePayload {
-    my $p = $_[0];
-    print "payload parsed\n";
-}
+my $mqtt_topic_prefix = "RF12";
 
 
 sub startSocat {
@@ -63,12 +49,12 @@ sub startSocat {
 }
 
 sub startMqttSub {
-    open MQTT_SUB, "mosquitto_sub -I rf12_gateway $mqtt_tls -v -t '$mqtt_topic_prefix/#' -h $mqtt_server -p $mqtt_port -u $mqtt_user -P $mqtt_pass |" or die "could not open mqtt client";
+    open MQTT_SUB, "mosquitto_sub -I rf12_gateway $mqtt_tls -v -t '$mqtt_topic_prefix/#' -h $mqtt_server -p $mqtt_port $mqtt_auth --will-topic '$mqtt_topic_prefix/connected' --will-payload '0' |" or die "could not open mqtt client";
 }
 
 sub mqttPub {
-    my ($topic, $payload) = @_;
-    system "mosquitto_pub -I rf12_gateway -r $mqtt_tls -h $mqtt_server -p $mqtt_port -u $mqtt_user -P $mqtt_pass -t $mqtt_topic_prefix/$topic -m '$payload'";
+    my ($topic, $payload, $flags) = @_;
+    system "mosquitto_pub -I rf12_gateway $flags $mqtt_tls -h $mqtt_server -p $mqtt_port $mqtt_auth -t $mqtt_topic_prefix/$topic -m '$payload'";
 }
 
 sub signalHandler {
@@ -86,18 +72,19 @@ sub signalHandler {
 ################################
 
 sub actionSmartmeter {
-  my $data = shift;
+  my ($action, $data) = @_;
   print "not implemented!\n";
 }
 
 sub actionSensornode {
-  my $data = shift;
+  my ($action, $data) = @_;
   my %commands = (
     "set" => 0,
   );
-  if ($data =~ m#(\d+)/(\w+) (\d+)$#) {
+  my $command = $commands{$action};
+
+  if ($data =~ m#(\d+) (\d+)$#) {
     my $id = $1;
-    my $command = $commands{$2};
     my $state = $3;
 
     if (defined($command) and ($command < 1)) {
@@ -108,18 +95,26 @@ sub actionSensornode {
   }
 }
 
+
 sub actionSocket {
-  my $data = shift;
+  my ($action, $data) = @_;
   my %commands = (
     "query" => 0,
     "set" => 1,
-    "toggle" => 2
+    "toggle" => 2,
+    "reset_ID", => 3,
+    "set_new_ID", => 4,
+    "request_new_ID", => 5,
+    "bulk_query", => 6,
+    "bulk_set", => 7,
+    "heartbeat", => 8,
   );
-  if ($data =~ m#(\d+)/(\d+)/(\w+) (\d+)#) {
+  my $command = $commands{$action};
+
+  if ($data =~ m#(\d+)/(\d+) (\d+)#) {
     my $id = $1;
     my $sub_id = $2;
-    my $command = $commands{$3};
-    my $state = $4;
+    my $state = $3;
 
     if (($command) and ($command < 3)) {
       print "sending on serial port: $id,$sub_id,$command,$state,8s\n";
@@ -129,36 +124,44 @@ sub actionSocket {
 }
 
 sub actionGateway {
-  my $data = shift;
+  my ($action, $data) = @_;
   my %commands = (
-    "acks" => 0,
+    "connected" => 0,
+    "acks" => 1,
   );
-  if ($data =~ m#(\d+)/(\d+)/(\w+) (\d+)#) {
-    my $id = $1;
-    my $sub_id = $2;
-    my $command = $commands{$3};
-    my $state = $4;
+  my $command = $commands{$action};
 
-    if (($command) and ($command < 1)) {
-      print "sending on serial port: $id,$sub_id,$command,$state,8s\n";
-      print SERIAL_IN "$id,$sub_id,$command,$state,8s\n";
+  if ($data =~ m#(\d+) (\d+)#) {
+    my $id = $1;
+    my $payload = $2;
+
+    if ($command) {
+      if ($command == 0) {
+        print SERIAL_IN "v\n";
+      } elsif ($command == 1) {
+        print SERIAL_IN $payload . "b\n";
+      }
     }
   }
 }
 
+sub actionGateway {
+}
+
 sub mqttToRF12 {
   my $data = shift;
-  if ($data =~ m#$mqtt_topic_prefix/(\w+)/(.*)#) {
-    my $dev_type = $1;
-    my $payload = $2;
+  if ($data =~ m#$mqtt_topic_prefix/(\w+)/(\w+)/(.*)#) {
+    my $action = $1;
+    my $dev_type = $2;
+    my $payload = $3;
     if ($dev_type eq "smartmeter") {
-      actionSmartmeter($payload);
+      actionSmartmeter($action, $payload);
     } elsif ($dev_type eq "sensornode") {
-      actionSensornode($payload);
+      actionSensornode($action, $payload);
     } elsif ($dev_type eq "socket") {
-      actionSocket($payload);
+      actionSocket($action, $payload);
     } elsif ($dev_type eq "gateway") {
-      actionGateway($payload);
+      actionGateway($action, $payload);
     }
   }
 }
@@ -223,27 +226,26 @@ sub pubSensornode {
       vbat => $vbat/1000,
       vsol => $vsol/1000,
       lowbat => $lowbat,
-      action => $action,
+      val => $action,
     );
 
     my $json_string = encode_json(\%ret);
-    mqttPub("sensornode/$id/data", $json_string);
+    mqttPub("status/sensornode/$id", $json_string, "");
   }
 }
 
 sub pubSocket {
   my $payload = shift;
   my @socket_states = (
-    "state", # query
-    "state", # set
-    "state", # toggle
-    3,
-    4,
-    "req_id",
-    6,
-    7,
-    "state",
-    "req_state",
+    "query", # 0
+    "set", # 1
+    "toggle", # 2
+    "reset_ID", # 3
+    "set_new_ID", # 4
+    "request_new_ID", # 5
+    "bulk_query", # 6
+    "bulk_set", # 7
+    "heartbeat", # 8
   );
 
   if ($payload =~ /(\d+) (\d+) (\d+) (\d+)/) {
@@ -251,14 +253,31 @@ sub pubSocket {
     my $sub_id = $2;
     my $command = $3;
     my $state = $4;
-    if (($sub_id == 1) or ($command <= 2)) {
-      mqttPub("socket/$id/$sub_id/$socket_states[$command]", $state);
-    } else {
-      foreach my $bit (1..$sub_id) {
-        mqttPub("socket/$id/$bit/$socket_states[$command]", $state & 1);
-        $state = $state >> 1;
+    if (($command < 3) || ($command > 5)) {
+      if (($sub_id == 1) or ($command <= 2)) {
+        mqttPub("status/socket/$id/$sub_id", $state, "-r");
+      } else {
+        foreach my $bit (1..$sub_id) {
+          mqttPub("status/socket/$id/$bit", $state & 1, "-r");
+          $state = $state >> 1;
+        }
       }
+    } else {
+        mqttPub("$socket_states[$command]/socket/$id/$sub_id", $state, "-r");
     }
+  }
+}
+
+
+sub pubButton {
+  my $payload = shift;
+
+  if ($payload =~ /(\d+) (\d+) (\d+) (\d+)/) {
+    my $id = $1;
+    my $button_id = $2;
+    my $vbefore = $3;
+    my $vafter = $4;
+    mqttPub("status/button/$id/$button_id", 1, "");
   }
 }
 
@@ -268,7 +287,9 @@ sub rf12ToMqtt {
   if ($rf12 =~ /RF12 (\d+) ([\d\s]+)/) {
     my $id = $1;
     my $payload = $2;
-    if ($id == 4) {
+    if ($id == 3) {
+      pubButton($payload);
+    } elsif ($id == 4) {
       pubSensornode($payload);
     } elsif ($id == 5) {
       pubSmartmeter($payload);

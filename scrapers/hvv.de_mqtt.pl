@@ -18,6 +18,8 @@ my $mqtt_broker = "localhost";
 my $mqtt_port = "1884";
 my $mqtt_user = 'scraper-hvv';
 my $mqtt_pass = 'sLKkfC$66w2';
+#my $mqtt_auth = "-u '$mqtt_user' -P '$mqtt_pass'"
+my $mqtt_auth = "";
 my $mqtt_cacert = "/etc/mosquitto/ca_certificates/ca.crt";
 #my $mqtt_tls = "--cafile $mqtt_cacert";
 my $mqtt_tls = "";
@@ -130,7 +132,7 @@ sub getSchedule {
         $connection{delay_color} = $delay_color if ($delay_color);
 
         my $json_string = encode_json(\%connection);
-        system("mosquitto_pub -i hvv_scraper-$$ -t 'WEB/public_transport/schedule' -m '$json_string' $mqtt_tls -h $mqtt_broker -p $mqtt_port -u $mqtt_user -P '$mqtt_pass'");
+        system("mosquitto_pub -i hvv_scraper-$$ -t 'WEB/public_transport/schedule' -m '$json_string' $mqtt_tls -h $mqtt_broker -p $mqtt_port $mqtt_auth");
       }
       last if (($station_ref->{display_lines}) && (++$result_counter >= $station_ref->{display_lines}));
     }
@@ -139,7 +141,7 @@ sub getSchedule {
 
 
 sub startMqttSub {
-    open MQTT_SUB, "mosquitto_sub -t 'WEB/public_transport/get' $mqtt_tls -h $mqtt_broker -p $mqtt_port -u $mqtt_user -P '$mqtt_pass'|" or die "could not open mqtt client";
+    open MQTT_SUB, "mosquitto_sub -t 'WEB/public_transport/get' $mqtt_tls -h $mqtt_broker -p $mqtt_port $mqtt_auth|" or die "could not open mqtt client";
 }
 
 sub signalHandler {

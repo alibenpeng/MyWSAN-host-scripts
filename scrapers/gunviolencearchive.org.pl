@@ -5,14 +5,31 @@ use warnings;
 
 use Time::Local;
 
-my $mqtt_broker = "wsan1";
+my $mqtt_broker = "localhost";
 my $mqtt_user = "scraper-gva";
 my $mqtt_pass = "dCvbtDx^C38";
-
+#my $mqtt_auth = "-u '$mqtt_user' -P '$mqtt_pass'"
+my $mqtt_auth = "";
+my $mqtt_port = "1884";
 my $site = "http://www.gunviolencearchive.org";
 my $report = "reports/mass-shooting";
 
 my $now = time;
+
+my %months = (
+	"January" => 0,
+	"February" => 1,
+	"March" => 2,
+	"April" => 3,
+	"May" => 4,
+	"June" => 5,
+	"July" => 6,
+	"August" => 7,
+	"September" => 8,
+	"October" => 9,
+	"November" => 10,
+	"December" => 11,
+);
 
 sub encode_json {
   my $hashref = shift;
@@ -36,7 +53,7 @@ foreach (@page) {
 
       print "date: $day.$month.$year\n";
 
-      my $dt = timelocal(undef, undef, undef, $day, $month + 1, $year);
+      my $dt = timelocal(undef, undef, undef, $day, $months{$month}, $year);
 print "now: $now, dt: $dt\n";
       my $seconds = $now - $dt;
       my $days = int($seconds / 3600 / 24);
@@ -49,7 +66,7 @@ print "now: $now, dt: $dt\n";
 
       my $json_string = &encode_json(\%last_shooting);
 
-      system("mosquitto_pub -r -i gva_scraper-$$ -t 'WEB/last_mass_shooting' -m '$json_string' -h $mqtt_broker -u $mqtt_user -P '$mqtt_pass'");
+      system("mosquitto_pub -r -i gva_scraper-$$ -t 'WEB/last_mass_shooting' -m '$json_string' -h $mqtt_broker -p $mqtt_port $mqtt_auth");
       last;
     }
   }
